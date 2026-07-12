@@ -47,14 +47,17 @@ pub struct EmbeddingEngine {
 /// amortize kernel-launch and host↔device-copy overhead well.
 ///
 /// CoreML on Apple Silicon uses **unified memory** (shared CPU+GPU RAM).
-/// Large batches compete with the process working set for the same RAM,
-/// triggering the memory guard. Use a moderate batch (128) instead.
+/// The CoreML EP compiles the ONNX model into a CoreML model that lives
+/// in system RAM, and the model + compilation artifacts alone can exceed
+/// 1GB. Large batches add to that footprint and trigger the memory guard.
+/// Use the same batch size as CPU (64) — the EP still accelerates compute,
+/// just without oversized batches that would OOM on unified memory.
 #[cfg(any(feature = "embeddings", feature = "neural"))]
 fn gpu_default_batch_size() -> usize {
-    // CoreML: unified memory — moderate batches.
+    // CoreML: unified memory — same as CPU, no VRAM to amortize into.
     #[cfg(all(target_os = "macos", feature = "ort-coreml"))]
     {
-        128
+        64
     }
     // CUDA / ROCm / DirectML / WebGPU: dedicated VRAM — go big.
     #[cfg(not(all(target_os = "macos", feature = "ort-coreml")))]
@@ -314,11 +317,9 @@ impl EmbeddingEngine {
         // copy overhead per call that a bigger matmul would amortize better.
         //
         // CoreML on Apple Silicon uses **unified memory** (shared CPU+GPU RAM),
-        // not separate VRAM like CUDA. Large batches compete with the process's
-        // own working set for the same RAM, triggering the memory guard. Use a
-        // moderate batch (128) — bigger than CPU-only (64) but smaller than
-        // CUDA's 256, since CoreML still benefits from batching but can't
-        // spill into dedicated VRAM.
+        // not separate VRAM like CUDA. The model + CoreML compilation artifacts
+        // live in system RAM, so large batches OOM. Use 64 (same as CPU) — the
+        // EP still accelerates compute without oversized memory pressure.
         let batch_size: usize = std::env::var("LEAN_CTX_EMBEDDING_BATCH_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
