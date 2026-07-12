@@ -41,6 +41,28 @@ pub struct EmbeddingEngine {
     output_name: String,
 }
 
+/// Default embedding mini-batch size when a GPU EP is active.
+///
+/// CUDA / ROCm / DirectML have **dedicated VRAM** — large batches (256)
+/// amortize kernel-launch and host↔device-copy overhead well.
+///
+/// CoreML on Apple Silicon uses **unified memory** (shared CPU+GPU RAM).
+/// Large batches compete with the process working set for the same RAM,
+/// triggering the memory guard. Use a moderate batch (128) instead.
+#[cfg(any(feature = "embeddings", feature = "neural"))]
+fn gpu_default_batch_size() -> usize {
+    // CoreML: unified memory — moderate batches.
+    #[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+    {
+        128
+    }
+    // CUDA / ROCm / DirectML / WebGPU: dedicated VRAM — go big.
+    #[cfg(not(all(target_os = "macos", feature = "ort-coreml")))]
+    {
+        256
+    }
+}
+
 /// Abstraction over different tokenizer backends.
 enum TokenizerKind {
     WordPiece(WordPieceTokenizer),
@@ -290,6 +312,13 @@ impl EmbeddingEngine {
         // sequential session.run() call (no fan-out across batches), so small
         // batches under-utilize the GPU and pay kernel-launch / host↔device
         // copy overhead per call that a bigger matmul would amortize better.
+        //
+        // CoreML on Apple Silicon uses **unified memory** (shared CPU+GPU RAM),
+        // not separate VRAM like CUDA. Large batches compete with the process's
+        // own working set for the same RAM, triggering the memory guard. Use a
+        // moderate batch (128) — bigger than CPU-only (64) but smaller than
+        // CUDA's 256, since CoreML still benefits from batching but can't
+        // spill into dedicated VRAM.
         let batch_size: usize = std::env::var("LEAN_CTX_EMBEDDING_BATCH_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -297,7 +326,7 @@ impl EmbeddingEngine {
             .unwrap_or_else(|| {
                 #[cfg(any(feature = "embeddings", feature = "neural"))]
                 if crate::core::ort_execution_providers::gpu_active() {
-                    return 256;
+                    return gpu_default_batch_size();
                 }
                 64
             });

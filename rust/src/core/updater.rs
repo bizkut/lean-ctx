@@ -244,9 +244,7 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
             }
             UpdateMode::Normal => println!("Run 'lean-ctx update' to install."),
             UpdateMode::EnableGpu => println!("Run 'lean-ctx enable-gpu' to install {asset_name}."),
-            UpdateMode::EnableCoreml => {
-                println!("Run 'lean-ctx enable-coreml' to install {asset_name}.")
-            }
+            UpdateMode::EnableCoreml => println!("Run 'lean-ctx enable-coreml' to install {asset_name}."),
         }
         return;
     }
