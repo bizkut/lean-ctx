@@ -46,6 +46,14 @@ jobs:
             artifact: x86_64-unknown-linux-gnu-cuda
             os: ubuntu-22.04
             cargo_features: ort-cuda
+          - target: aarch64-apple-darwin
+            artifact: aarch64-apple-darwin-coreml
+            os: macos-latest
+            cargo_features: ort-coreml
+          - target: x86_64-apple-darwin
+            artifact: x86_64-apple-darwin-coreml
+            os: macos-latest
+            cargo_features: ort-coreml
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04
             cross: true

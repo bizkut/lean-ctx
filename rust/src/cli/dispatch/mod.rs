@@ -167,6 +167,10 @@ pub fn run() {
                 core::updater::enable_gpu(&rest);
                 return;
             }
+            "enable-coreml" | "coreml" => {
+                core::updater::enable_coreml(&rest);
+                return;
+            }
             "rules" => {
                 crate::cli::rules_cmd::cmd_rules(&rest);
                 return;

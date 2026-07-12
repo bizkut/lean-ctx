@@ -1,10 +1,10 @@
 //! ONNX Runtime execution provider selection: CPU default, opt-in GPU providers.
 //!
-//! Each GPU EP is gated behind its own Cargo feature (`ort-cuda`, `ort-rocm`, etc.).
-//! `LEAN_CTX_ORT_EXECUTION_PROVIDER=cpu|gpu|auto` controls runtime selection.
-//! By default, `auto` enables GPU only when the selected ORT dylib looks like a
-//! GPU runtime; otherwise CPU is used. ORT falls back to CPU when a registered
-//! GPU EP is unusable.
+//! Each GPU EP is gated behind its own Cargo feature (`ort-cuda`, `ort-coreml`,
+//! `ort-rocm`, etc.). `LEAN_CTX_ORT_EXECUTION_PROVIDER=cpu|gpu|auto` controls
+//! runtime selection. By default, `auto` enables GPU only when the selected ORT
+//! dylib looks like a GPU runtime; otherwise CPU is used. ORT falls back to CPU
+//! when a registered GPU EP is unusable.
 
 use std::path::Path;
 
@@ -69,37 +69,74 @@ fn policy_wants_gpu() -> bool {
 /// (notably under WSL2 GPU passthrough), but oversizing batches for a GPU that
 /// silently fell back to CPU makes the CPU path dramatically slower — so this
 /// must reflect the EP that ORT will really register, not just the policy.
+#[allow(unused_assignments, unused_mut)]
 pub fn gpu_active() -> bool {
     if !policy_wants_gpu() {
         return false;
     }
-    // The shipped Linux/Windows GPU build compiles only the CUDA EP. If its
-    // runtime deps (libcudart/libcublas/libcudnn/…) can't be dlopen'd, ORT
-    // silently registers CPU instead; don't size batches for a phantom GPU.
+    // Each compiled GPU EP that has a runtime probe contributes to the
+    // decision. If any probed provider's runtime loads, the GPU will really
+    // run inference. Providers without a probe (rocm, webgpu, directml, or
+    // coreml on iOS where it's always built-in) trust the policy.
+    //
+    // The shipped Linux/Windows GPU build compiles only the CUDA EP; the
+    // macOS build compiles only the CoreML EP. If the runtime deps can't be
+    // dlopen'd, ORT silently registers CPU instead; don't size batches for a
+    // phantom GPU.
+    let mut probed = false;
+    let mut any_available = false;
+
     #[cfg(feature = "ort-cuda")]
     {
-        cuda_runtime_available()
+        probed = true;
+        if cuda_runtime_available() {
+            any_available = true;
+        }
     }
-    #[cfg(not(feature = "ort-cuda"))]
+
+    #[cfg(all(target_os = "macos", feature = "ort-coreml"))]
     {
+        probed = true;
+        if coreml_runtime_available() {
+            any_available = true;
+        }
+    }
+
+    if probed {
+        any_available
+    } else {
+        // No probe-able provider compiled; trust the policy.
         true
     }
 }
 
-/// When the policy expects a GPU but the CUDA runtime can't be loaded (so ORT
+/// When the policy expects a GPU but the runtime can't be loaded (so ORT
 /// falls back to CPU), returns a user-facing explanation with the exact install
 /// commands for the missing libraries. Returns `None` when the GPU actually
 /// works or when CPU was requested.
+#[allow(clippy::needless_return, unreachable_code)]
 pub fn gpu_fallback_warning() -> Option<String> {
+    if !policy_wants_gpu() || gpu_active() {
+        return None;
+    }
+
+    // Policy wants GPU but no probed provider loaded — explain why.
     #[cfg(feature = "ort-cuda")]
     {
-        if !policy_wants_gpu() || cuda_runtime_available() {
-            return None;
-        }
         let detail = probe_cuda_runtime().err().unwrap_or_default();
-        Some(cuda_missing_message(&detail))
+        return Some(cuda_missing_message(&detail));
     }
-    #[cfg(not(feature = "ort-cuda"))]
+
+    #[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+    {
+        let detail = probe_coreml_runtime().err().unwrap_or_default();
+        return Some(coreml_missing_message(&detail));
+    }
+
+    #[cfg(not(any(
+        feature = "ort-cuda",
+        all(target_os = "macos", feature = "ort-coreml"),
+    )))]
     {
         None
     }
@@ -186,6 +223,85 @@ fn cuda_missing_message(probe_err: &str) -> String {
          To silence this and stay on CPU, set {env}=cpu.",
         env = PROVIDER_ENV,
         ort_minor = ort::MINOR_VERSION,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// CoreML execution provider (macOS / iOS)
+// ---------------------------------------------------------------------------
+//
+// CoreML is a system framework on macOS 10.15+ and iOS 11+, always present —
+// there are no separate runtime libraries to install (unlike CUDA's
+// libcudart/libcublas/libcudnn). The ORT CoreML EP may ship as a separate
+// provider plugin dylib (`libonnxruntime_providers_coreml.dylib`) or built
+// into the main ORT library. The probe checks for the plugin dylib; if it
+// is absent, CoreML is assumed built-in and available (system framework).
+
+/// Filename of the ORT CoreML provider shared library (macOS).
+#[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+fn coreml_provider_lib_name() -> &'static str {
+    "libonnxruntime_providers_coreml.dylib"
+}
+
+/// Path to the ORT CoreML provider library, resolved next to the selected ORT dylib.
+#[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+fn coreml_provider_lib_path() -> Option<std::path::PathBuf> {
+    let dylib = crate::core::ort_environment::resolved_ort_dylib_path().ok()?;
+    Some(dylib.parent()?.join(coreml_provider_lib_name()))
+}
+
+/// Probe whether the CoreML provider library can be loaded. Since CoreML is a
+/// system framework, the only failure mode is a missing provider plugin dylib
+/// (which may simply mean the EP is built into the main ORT library). Returns
+/// `Ok(())` if the plugin loads, if it is absent (built-in assumed), or if the
+/// only dlopen failure is the ORT host-symbol indirection.
+#[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+fn probe_coreml_runtime() -> Result<(), String> {
+    let Some(path) = coreml_provider_lib_path() else {
+        // Can't resolve the ORT dylib dir — assume built-in CoreML EP.
+        return Ok(());
+    };
+    if !path.exists() {
+        // No separate plugin dylib → CoreML EP is built into the main ORT
+        // library, and CoreML.framework is always present on macOS 10.15+.
+        return Ok(());
+    }
+    // SAFETY: loading the ORT CoreML provider shared library, exactly as
+    // ONNX Runtime itself does when registering the CoreML EP. We drop it
+    // immediately; this only checks that its dependencies resolve.
+    unsafe { libloading::Library::new(&path) }
+        .map(|_lib| ())
+        .or_else(|e| {
+            let err = e.to_string();
+            // ORT provider plugins are normally loaded by libonnxruntime itself.
+            // A direct dlopen may fail on ORT host symbols after CoreML deps
+            // have resolved; that is still enough for this dependency probe.
+            if err.contains("Provider_GetHost") {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
+}
+
+/// Cached result of [`probe_coreml_runtime`]; the check runs at most once.
+#[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+fn coreml_runtime_available() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| probe_coreml_runtime().is_ok())
+}
+
+/// User-facing message shown when the CoreML execution provider can't be loaded.
+#[cfg(all(target_os = "macos", feature = "ort-coreml"))]
+fn coreml_missing_message(probe_err: &str) -> String {
+    format!(
+        "GPU requested (via {PROVIDER_ENV}) but the CoreML execution provider could not be loaded \
+         — embedding is running on CPU. Loader error: {probe_err}\n\
+         CoreML is a system framework on macOS 10.15+ and should be available by default.\n\
+         If the ORT CoreML provider plugin is missing, reinstall lean-ctx with a \
+         macOS CoreML-enabled build:\n  \
+         curl -fsSL https://leanctx.com/install.sh | sh -s -- --coreml\n\
+         To silence this and stay on CPU, set {PROVIDER_ENV}=cpu.",
     )
 }
 
@@ -276,7 +392,11 @@ fn selected_runtime_looks_gpu() -> bool {
 
 fn runtime_path_looks_gpu(path: &Path) -> bool {
     let path_text = path.to_string_lossy().to_lowercase();
-    if path_text.contains("gpu") || path_text.contains("cuda") || path_text.contains("rocm") {
+    if path_text.contains("gpu")
+        || path_text.contains("cuda")
+        || path_text.contains("rocm")
+        || path_text.contains("coreml")
+    {
         return true;
     }
     let Some(parent) = path.parent() else {
@@ -289,6 +409,7 @@ fn runtime_path_looks_gpu(path: &Path) -> bool {
         "onnxruntime_providers_rocm.dll",
         "libonnxruntime_providers_cuda.dylib",
         "libonnxruntime_providers_rocm.dylib",
+        "libonnxruntime_providers_coreml.dylib",
     ]
     .iter()
     .any(|name| parent.join(name).exists())
@@ -326,6 +447,8 @@ mod tests {
     fn provider_policy_accepts_gpu_and_auto_aliases() {
         assert_eq!(provider_policy_from_value("gpu"), ProviderPolicy::Gpu);
         assert_eq!(provider_policy_from_value("CUDA"), ProviderPolicy::Gpu);
+        assert_eq!(provider_policy_from_value("coreml"), ProviderPolicy::Gpu);
+        assert_eq!(provider_policy_from_value("CoreML"), ProviderPolicy::Gpu);
         assert_eq!(provider_policy_from_value("auto"), ProviderPolicy::Auto);
     }
 }

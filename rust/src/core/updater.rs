@@ -1,6 +1,6 @@
 use std::io::Read;
 
-const GITHUB_API_RELEASES: &str = "https://api.github.com/repos/yvgude/lean-ctx/releases/latest";
+const GITHUB_API_RELEASES: &str = "https://api.github.com/repos/bizkut/lean-ctx/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn run(args: &[String]) {
@@ -11,10 +11,15 @@ pub fn enable_gpu(args: &[String]) {
     run_with_mode(args, UpdateMode::EnableGpu);
 }
 
+pub fn enable_coreml(args: &[String]) {
+    run_with_mode(args, UpdateMode::EnableCoreml);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateMode {
     Normal,
     EnableGpu,
+    EnableCoreml,
 }
 
 fn run_with_mode(args: &[String], mode: UpdateMode) {
@@ -106,7 +111,7 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
                 "  \x1b[2mUsage: lean-ctx update [<version>]   (e.g. lean-ctx update 3.8.5)\x1b[0m"
             );
             eprintln!(
-                "  \x1b[2mAvailable versions: https://github.com/yvgude/lean-ctx/releases\x1b[0m"
+                "  \x1b[2mAvailable versions: https://github.com/bizkut/lean-ctx/releases\x1b[0m"
             );
             std::process::exit(1);
         }
@@ -147,9 +152,10 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
         let title = match mode {
             UpdateMode::Normal => "lean-ctx updater",
             UpdateMode::EnableGpu => "lean-ctx GPU enablement",
+            UpdateMode::EnableCoreml => "lean-ctx CoreML enablement",
         };
         println!("  \x1b[1m◆ {title}\x1b[0m  \x1b[2mv{CURRENT_VERSION}\x1b[0m");
-        println!("  \x1b[2mChecking github.com/yvgude/lean-ctx …\x1b[0m");
+        println!("  \x1b[2mChecking github.com/bizkut/lean-ctx …\x1b[0m");
     }
 
     let release = match fetch_release(target_version.as_deref()) {
@@ -158,7 +164,7 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
             if let Some(v) = &target_version {
                 tracing::error!("Could not fetch lean-ctx v{v}: {e}");
                 tracing::error!(
-                    "Check the version exists: https://github.com/yvgude/lean-ctx/releases"
+                    "Check the version exists: https://github.com/bizkut/lean-ctx/releases"
                 );
             } else {
                 tracing::error!("Error fetching release info: {e}");
@@ -222,6 +228,13 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
                 std::process::exit(1);
             }
         },
+        UpdateMode::EnableCoreml => match coreml_platform_asset_name() {
+            Ok(name) => name,
+            Err(e) => {
+                tracing::error!("{e}");
+                std::process::exit(1);
+            }
+        },
     };
 
     if check_only {
@@ -231,6 +244,9 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
             }
             UpdateMode::Normal => println!("Run 'lean-ctx update' to install."),
             UpdateMode::EnableGpu => println!("Run 'lean-ctx enable-gpu' to install {asset_name}."),
+            UpdateMode::EnableCoreml => {
+                println!("Run 'lean-ctx enable-coreml' to install {asset_name}.")
+            }
         }
         return;
     }
@@ -241,7 +257,7 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
 
     let Some(download_url) = find_asset_url(&release, &asset_name) else {
         tracing::error!(
-            "No binary found for this platform ({asset_name}) in v{target_tag}. Download manually: https://github.com/yvgude/lean-ctx/releases"
+            "No binary found for this platform ({asset_name}) in v{target_tag}. Download manually: https://github.com/bizkut/lean-ctx/releases"
         );
         std::process::exit(1);
     };
@@ -261,7 +277,7 @@ fn run_with_mode(args: &[String], mode: UpdateMode) {
         } else {
             tracing::error!("Integrity verification failed: {e}");
             tracing::error!(
-                "Refusing to install an unverifiable binary. Re-run with `lean-ctx update --insecure` or download manually: https://github.com/yvgude/lean-ctx/releases"
+                "Refusing to install an unverifiable binary. Re-run with `lean-ctx update --insecure` or download manually: https://github.com/bizkut/lean-ctx/releases"
             );
             std::process::exit(1);
         }
@@ -687,7 +703,7 @@ fn release_api_url(version: Option<&str>) -> String {
         None => GITHUB_API_RELEASES.to_string(),
         Some(v) => {
             let core = v.trim_start_matches('v');
-            format!("https://api.github.com/repos/yvgude/lean-ctx/releases/tags/v{core}")
+            format!("https://api.github.com/repos/bizkut/lean-ctx/releases/tags/v{core}")
         }
     }
 }
@@ -1110,8 +1126,20 @@ fn platform_asset_name() -> String {
     let arch = std::env::consts::ARCH;
 
     let target = match (os, arch) {
-        ("macos", "aarch64") => "aarch64-apple-darwin".to_string(),
-        ("macos", "x86_64") => "x86_64-apple-darwin".to_string(),
+        ("macos", "aarch64") => {
+            if current_build_prefers_coreml_asset() {
+                "aarch64-apple-darwin-coreml".to_string()
+            } else {
+                "aarch64-apple-darwin".to_string()
+            }
+        }
+        ("macos", "x86_64") => {
+            if current_build_prefers_coreml_asset() {
+                "x86_64-apple-darwin-coreml".to_string()
+            } else {
+                "x86_64-apple-darwin".to_string()
+            }
+        }
         ("linux", "x86_64") => {
             let libc = detect_linux_libc();
             if current_build_prefers_gpu_asset() && libc == "gnu" {
@@ -1125,7 +1153,7 @@ fn platform_asset_name() -> String {
         _ => {
             tracing::error!(
                 "Unsupported platform: {os}/{arch}. Download manually from \
-                https://github.com/yvgude/lean-ctx/releases/latest"
+                https://github.com/bizkut/lean-ctx/releases/latest"
             );
             std::process::exit(1);
         }
@@ -1154,8 +1182,32 @@ fn gpu_platform_asset_name() -> Result<String, String> {
     Ok("lean-ctx-x86_64-unknown-linux-gnu-cuda.tar.gz".to_string())
 }
 
+fn coreml_platform_asset_name() -> Result<String, String> {
+    if std::env::consts::OS != "macos" {
+        return Err(
+            "CoreML binary is currently published for macOS only (Apple Silicon and Intel). Use `lean-ctx update` for the CPU binary or build with --features ort-coreml."
+                .to_string(),
+        );
+    }
+    let arch = std::env::consts::ARCH;
+    let target = match arch {
+        "aarch64" => "aarch64-apple-darwin-coreml",
+        "x86_64" => "x86_64-apple-darwin-coreml",
+        _ => {
+            return Err(format!(
+                "CoreML binary is not published for architecture '{arch}'. Use `lean-ctx update` for the CPU binary or build with --features ort-coreml."
+            ));
+        }
+    };
+    Ok(format!("lean-ctx-{target}.tar.gz"))
+}
+
 fn current_build_prefers_gpu_asset() -> bool {
     cfg!(feature = "ort-cuda")
+}
+
+fn current_build_prefers_coreml_asset() -> bool {
+    cfg!(feature = "ort-coreml")
 }
 
 #[cfg(test)]
@@ -1256,12 +1308,12 @@ mod tests {
         // #447: a bare version pins the `v`-prefixed tag …
         assert_eq!(
             release_api_url(Some("3.8.5")),
-            "https://api.github.com/repos/yvgude/lean-ctx/releases/tags/v3.8.5"
+            "https://api.github.com/repos/bizkut/lean-ctx/releases/tags/v3.8.5"
         );
         // … and an already-`v`-prefixed version is normalised, not doubled.
         assert_eq!(
             release_api_url(Some("v3.8.5")),
-            "https://api.github.com/repos/yvgude/lean-ctx/releases/tags/v3.8.5"
+            "https://api.github.com/repos/bizkut/lean-ctx/releases/tags/v3.8.5"
         );
     }
 

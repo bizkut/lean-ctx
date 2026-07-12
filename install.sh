@@ -5,6 +5,7 @@
 #   ./install.sh                # download pre-built binary (no Rust needed)
 #   ./install.sh --download     # download pre-built binary (no Rust needed)
 #   ./install.sh --cuda         # download Linux x86_64 CUDA-enabled binary
+#   ./install.sh --coreml       # download macOS aarch64 CoreML-enabled binary
 #   ./install.sh --build-only   # build only, don't install
 #   ./install.sh --uninstall    # fully remove lean-ctx (processes, configs, autostart, data, binary)
 #
@@ -17,7 +18,7 @@
 
 set -eu
 
-REPO="yvgude/lean-ctx"
+REPO="bizkut/lean-ctx"
 INSTALL_DIR="${LEAN_CTX_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_FLAVOR="${LEAN_CTX_INSTALL_FLAVOR:-cpu}"
 # Resolve the script's directory when invoked as a file. When piped via
@@ -180,9 +181,17 @@ install_download() {
       fi
       target="${target}-cuda"
       ;;
+    coreml)
+      if [ "$target" != "aarch64-apple-darwin" ] && [ "$target" != "x86_64-apple-darwin" ]; then
+        echo "Error: CoreML pre-built binary is currently published for macOS (Apple Silicon and Intel) only."
+        echo "Detected: $target"
+        exit 1
+      fi
+      target="${target}-coreml"
+      ;;
     cpu|"") ;;
     *)
-      echo "Error: unknown install flavor '$INSTALL_FLAVOR' (expected cpu or cuda)"
+      echo "Error: unknown install flavor '$INSTALL_FLAVOR' (expected cpu, cuda, or coreml)"
       exit 1
       ;;
   esac
@@ -341,14 +350,16 @@ uninstall() {
 case "${1:-}" in
   --download)    install_download ;;
   --cuda|--gpu)  INSTALL_FLAVOR="cuda"; install_download ;;
+  --coreml)      INSTALL_FLAVOR="coreml"; install_download ;;
   --build-only)  install_from_source --build-only ;;
   --uninstall)   shift; uninstall "$@" ;;
   --help|-h)
-    echo "Usage: $0 [--download|--cuda|--build-only|--uninstall|--help]"
+    echo "Usage: $0 [--download|--cuda|--coreml|--build-only|--uninstall|--help]"
     echo ""
     echo "  (no args)     Download pre-built binary (builds from source if run inside the lean-ctx repo)"
     echo "  --download    Download pre-built binary (no Rust needed)"
     echo "  --cuda        Download Linux x86_64 CUDA-enabled binary"
+    echo "  --coreml      Download macOS CoreML-enabled binary (Apple Silicon + Intel)"
     echo "  --build-only  Build only, don't install"
     echo "  --uninstall   Fully remove lean-ctx (processes, configs, autostart, data, binary)"
     echo ""
@@ -357,7 +368,7 @@ case "${1:-}" in
     echo ""
     echo "Environment:"
     echo "  LEAN_CTX_INSTALL_DIR  Custom install directory (default: ~/.local/bin)"
-    echo "  LEAN_CTX_INSTALL_FLAVOR  Binary flavor: cpu or cuda (default: cpu)"
+    echo "  LEAN_CTX_INSTALL_FLAVOR  Binary flavor: cpu, cuda, or coreml (default: cpu)"
     ;;
   *)
     if [ -d "$RUST_DIR" ]; then

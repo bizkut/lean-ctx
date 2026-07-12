@@ -74,6 +74,7 @@ MANAGE:
     lean-ctx status                Am I connected? (quick check)
     lean-ctx update                Update to the latest version
     lean-ctx enable-gpu            Install the CUDA-enabled Linux binary
+    lean-ctx enable-coreml         Install the CoreML-enabled macOS binary
     lean-ctx uninstall             Remove lean-ctx cleanly
 
 SAFETY (env vars):
@@ -85,7 +86,7 @@ MORE:
     lean-ctx cheatsheet            Workflow cheat sheet for AI agents
 
 WEBSITE: https://leanctx.com
-GITHUB:  https://github.com/yvgude/lean-ctx
+GITHUB:  https://github.com/bizkut/lean-ctx
 ",
         version = env!("CARGO_PKG_VERSION"),
         banner = capability_banner(),
@@ -224,6 +225,7 @@ COMMANDS:
     debug-log [list|tail N|clear|path]  Opt-in tool-call + hook-routing log (set debug_log / LEAN_CTX_DEBUG_LOG)
     update [<version>] [--check]   Update lean-ctx, or pin a version, from GitHub Releases
     enable-gpu [--check]           Install CUDA-enabled binary (x86_64 GNU/Linux)
+    enable-coreml [--check]        Install CoreML-enabled binary (macOS Apple Silicon + Intel)
     stop                           Stop ALL lean-ctx processes (daemon, proxy, orphans)
     restart                        Restart daemon (applies config.toml changes)
     dev-install                    Build release + atomic install + restart (for development)
@@ -381,7 +383,7 @@ TROUBLESHOOTING:
     Preview init?        lean-ctx init --global --dry-run
 
 WEBSITE: https://leanctx.com
-GITHUB:  https://github.com/yvgude/lean-ctx
+GITHUB:  https://github.com/bizkut/lean-ctx
 ",
         version = env!("CARGO_PKG_VERSION"),
         banner = capability_banner(),

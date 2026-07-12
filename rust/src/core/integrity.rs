@@ -28,7 +28,8 @@ pub fn verify_integrity() -> bool {
 }
 
 pub fn is_official_origin() -> bool {
-    ORIGIN_REPO.contains("yvgude/lean-ctx") && ORIGIN_NAME == "lean-ctx"
+    (ORIGIN_REPO.contains("yvgude/lean-ctx") || ORIGIN_REPO.contains("bizkut/lean-ctx"))
+        && ORIGIN_NAME == "lean-ctx"
 }
 
 pub struct IntegrityReport {
@@ -56,7 +57,7 @@ pub fn origin_line() -> String {
     } else {
         format!(
             "WARNING: Modified redistribution detected. \
-             Official builds: https://github.com/yvgude/lean-ctx \
+             Official builds: https://github.com/bizkut/lean-ctx \
              (pkg={}, repo={})",
             report.pkg_name, report.repo
         )

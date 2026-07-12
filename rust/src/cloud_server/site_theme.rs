@@ -215,7 +215,7 @@ pub(super) fn footer(base: &str) -> String {
 </a>
 <p class="lc-footer-tag">The context engineering layer for AI coding tools — your AI sees only what matters.</p>
 <div class="lc-footer-social">
-<a href="https://github.com/yvgude/lean-ctx" target="_blank" rel="noopener">GitHub</a>
+<a href="https://github.com/bizkut/lean-ctx" target="_blank" rel="noopener">GitHub</a>
 <a href="https://discord.gg/pTHkG9Hew9" target="_blank" rel="noopener">Discord</a>
 <a href="https://crates.io/crates/lean-ctx" target="_blank" rel="noopener">crates.io</a>
 </div>
