@@ -7,6 +7,12 @@ on:
       # excludes the editor-extension tags (`vscode-v*`), which have their own
       # workflow (publish-vscode.yml) and must NOT trigger a binary release.
       - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v3.9.9)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -205,6 +211,18 @@ jobs:
       - uses: actions/checkout@v4 # v4
         with:
           persist-credentials: false
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "version=$(echo '${{ inputs.tag }}' | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -212,8 +230,8 @@ jobs:
 
       - name: Create stable source tarball
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          git archive --format=tar.gz --prefix="lean-ctx-${VERSION}/" "${GITHUB_REF_NAME}" -o "lean-ctx-${VERSION}-source.tar.gz"
+          VERSION="${{ steps.tag.outputs.version }}"
+          git archive --format=tar.gz --prefix="lean-ctx-${VERSION}/" "${{ steps.tag.outputs.name }}" -o "lean-ctx-${VERSION}-source.tar.gz"
 
       - name: Generate checksums
         run: sha256sum lean-ctx-*.tar.gz lean-ctx-*.zip > SHA256SUMS
@@ -221,7 +239,7 @@ jobs:
       - name: Extract release notes from CHANGELOG
         id: notes
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.tag.outputs.version }}"
           PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^v${VERSION}$" | tail -1)
           NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
 
@@ -239,13 +257,14 @@ jobs:
             echo ""
             echo "> **Note:** After upgrading via cargo/npm/brew, run \`lean-ctx setup\` to refresh shell aliases. \`lean-ctx update\` does this automatically."
             echo ""
-            echo "**Full Changelog**: https://github.com/yvgude/lean-ctx/compare/${PREV_TAG}...v${VERSION}"
+            echo "**Full Changelog**: https://github.com/bizkut/lean-ctx/compare/${PREV_TAG}...v${VERSION}"
             echo "BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           body: ${{ steps.notes.outputs.body }}
           files: |
             lean-ctx-*.tar.gz
